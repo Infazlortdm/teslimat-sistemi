@@ -12,7 +12,7 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
-TOKEN = "8191531749:AAFqEELtLO-XFmvHdf99EZ5WNxwjG9d6LcU"
+TOKEN = "8229950774:AAGO63nQ_NfYnznbO8a4Qm_B-cCOGxESvQM"
 ADMIN_ID = 8452588697
 
 DATA_FILE = "data.json"
