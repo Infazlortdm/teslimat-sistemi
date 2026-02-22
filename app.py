@@ -1,169 +1,198 @@
-import sqlite3
 import os
-import asyncio
-from flask import Flask, request
+import json
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
-    ConversationHandler,
+    MessageHandler,
     filters,
 )
 
-TOKEN = "8191531749:AAFqEELtLO-XFmvHdf99EZ5WNxwjG9d6LcU"
-ADMIN_ID = 8452588697
-PORT = int(os.environ.get("PORT", 10000))
+TOKEN = os.getenv("8191531749:AAFqEELtLO-XFmvHdf99EZ5WNxwjG9d6LcU")
+ADMIN_ID = int(os.getenv("8452588697"))
 
-app_flask = Flask(__name__)
+DATA_FILE = "data.json"
 
-# DATABASE
-conn = sqlite3.connect("database.db", check_same_thread=False)
-cursor = conn.cursor()
+# -------------------- VERİ YÜKLE --------------------
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return {
+            "kuryeler": {},
+            "isletmeler": {},
+            "bolgeler": [],
+            "siparisler": []
+        }
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    telegram_id INTEGER PRIMARY KEY,
-    role TEXT,
-    name TEXT,
-    region TEXT
-)
-""")
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    business_name TEXT,
-    region TEXT,
-    status TEXT,
-    courier INTEGER
-)
-""")
-conn.commit()
+data = load_data()
 
-ROLE, NAME, REGION = range(3)
-
-telegram_app = ApplicationBuilder().token(TOKEN).build()
-
+# -------------------- START --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["İşletmeyim", "Kuryeyim"]]
-    await update.message.reply_text(
-        "Hoşgeldin 👋 Rolünü seç:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-    )
-    return ROLE
+    user_id = str(update.effective_user.id)
 
-async def choose_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if user_id == str(ADMIN_ID):
+        keyboard = [
+            ["➕ Kurye Ekle", "➕ İşletme Ekle"],
+            ["🌍 Bölge Ekle", "📦 Tüm Siparişler"],
+        ]
+        await update.message.reply_text(
+            "👑 ADMIN PANEL",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        )
+        return
+
+    if user_id in data["isletmeler"]:
+        keyboard = [
+            ["📦 Sipariş Oluştur"],
+            ["📋 Siparişlerim"],
+            ["🚪 Çıkış Yap"]
+        ]
+        await update.message.reply_text(
+            "🏪 İŞLETME PANEL",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        )
+        return
+
+    if user_id in data["kuryeler"]:
+        keyboard = [
+            ["🟡 Bekleyenler"],
+            ["🔵 Aldıklarım"],
+            ["🟢 Teslim Ettiklerim"],
+            ["🚪 Çıkış Yap"]
+        ]
+        await update.message.reply_text(
+            "🚚 KURYE PANEL",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        )
+        return
+
+    await update.message.reply_text("Yetkiniz yok.")
+
+# -------------------- MESAJ --------------------
+async def mesaj(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
     text = update.message.text
-    if text == "İşletmeyim":
-        context.user_data["role"] = "business"
-        await update.message.reply_text("İşletme adını yaz:")
-        return NAME
-    elif text == "Kuryeyim":
-        context.user_data["role"] = "courier"
-        await update.message.reply_text("Adını yaz:")
-        return NAME
-    return ROLE
 
-async def save_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["name"] = update.message.text
-    await update.message.reply_text("Bölgeni yaz:")
-    return REGION
+    # -------- ADMIN --------
+    if user_id == str(ADMIN_ID):
 
-async def save_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    region = update.message.text
-    role = context.user_data["role"]
-    name = context.user_data["name"]
+        if text == "➕ Kurye Ekle":
+            await update.message.reply_text("Kurye ID gönder:")
+            context.user_data["mod"] = "kurye_ekle"
 
-    cursor.execute(
-        "INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?)",
-        (user_id, role, name, region),
-    )
-    conn.commit()
+        elif text == "➕ İşletme Ekle":
+            await update.message.reply_text("İşletme ID gönder:")
+            context.user_data["mod"] = "isletme_ekle"
 
-    await update.message.reply_text("Kayıt tamam ✅")
-    return ConversationHandler.END
+        elif text == "🌍 Bölge Ekle":
+            await update.message.reply_text("Bölge adı gönder:")
+            context.user_data["mod"] = "bolge_ekle"
 
-async def siparis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    cursor.execute("SELECT role, name, region FROM users WHERE telegram_id=?", (user_id,))
-    user = cursor.fetchone()
+        elif text == "📦 Tüm Siparişler":
+            for s in data["siparisler"]:
+                await update.message.reply_text(
+                    f"ID:{s['id']} | Bölge:{s['bolge']} | Durum:{s['durum']}"
+                )
 
-    if not user or user[0] != "business":
-        await update.message.reply_text("Sadece işletme sipariş oluşturabilir.")
-        return
+        elif context.user_data.get("mod") == "kurye_ekle":
+            data["kuryeler"][text] = {"bolge": "", "aktif": True}
+            save_data(data)
+            await update.message.reply_text("✅ Kurye eklendi.")
+            context.user_data["mod"] = None
 
-    cursor.execute(
-        "INSERT INTO orders (business_name, region, status) VALUES (?, ?, ?)",
-        (user[1], user[2], "bekliyor"),
-    )
-    conn.commit()
+        elif context.user_data.get("mod") == "isletme_ekle":
+            data["isletmeler"][text] = {"aktif": True}
+            save_data(data)
+            await update.message.reply_text("✅ İşletme eklendi.")
+            context.user_data["mod"] = None
 
-    await update.message.reply_text("Sipariş oluşturuldu ✅")
+        elif context.user_data.get("mod") == "bolge_ekle":
+            data["bolgeler"].append(text)
+            save_data(data)
+            await update.message.reply_text("✅ Bölge eklendi.")
+            context.user_data["mod"] = None
 
-async def paketler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    cursor.execute("SELECT role, region FROM users WHERE telegram_id=?", (user_id,))
-    user = cursor.fetchone()
+    # -------- KURYE --------
+    elif user_id in data["kuryeler"]:
 
-    if not user or user[0] != "courier":
-        await update.message.reply_text("Sadece kurye görebilir.")
-        return
+        if text == "🟡 Bekleyenler":
+            for s in data["siparisler"]:
+                if s["durum"] == "Bekliyor":
+                    await update.message.reply_photo(
+                        photo=s["foto"],
+                        caption=f"ID:{s['id']} /al {s['id']}"
+                    )
 
-    cursor.execute(
-        "SELECT id, business_name FROM orders WHERE region=? AND status='bekliyor'",
-        (user[1],),
-    )
-    orders = cursor.fetchall()
+        elif text == "🔵 Aldıklarım":
+            for s in data["siparisler"]:
+                if s["alan"] == user_id:
+                    await update.message.reply_text(f"ID:{s['id']} | {s['durum']}")
 
-    if not orders:
-        await update.message.reply_text("Bu bölgede paket yok.")
-        return
+        elif text == "🟢 Teslim Ettiklerim":
+            for s in data["siparisler"]:
+                if s["alan"] == user_id and s["durum"] == "Teslim":
+                    await update.message.reply_text(f"ID:{s['id']}")
 
-    text = "📦 Paketler:\n"
-    for o in orders:
-        text += f"No: {o[0]} - {o[1]}\n"
+    # -------- İŞLETME --------
+    elif user_id in data["isletmeler"]:
 
-    await update.message.reply_text(text)
+        if text == "📦 Sipariş Oluştur":
+            keyboard = [[b] for b in data["bolgeler"]]
+            await update.message.reply_text(
+                "Bölge seç:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+            )
+            context.user_data["mod"] = "bolge_sec"
 
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
-        await update.message.reply_text("Yetkin yok.")
-        return
+        elif context.user_data.get("mod") == "bolge_sec":
+            context.user_data["bolge"] = text
+            await update.message.reply_text("Fotoğraf gönder:")
+            context.user_data["mod"] = "foto_bekle"
 
-    cursor.execute("SELECT COUNT(*) FROM users")
-    total = cursor.fetchone()[0]
-    await update.message.reply_text(f"Toplam kullanıcı: {total}")
+# -------------------- FOTO --------------------
+async def foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
 
-conv = ConversationHandler(
-    entry_points=[CommandHandler("start", start)],
-    states={
-        ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_role)],
-        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_name)],
-        REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_region)],
-    },
-    fallbacks=[],
-)
+    if user_id in data["isletmeler"] and context.user_data.get("mod") == "foto_bekle":
+        siparis_id = len(data["siparisler"]) + 1
+        data["siparisler"].append({
+            "id": siparis_id,
+            "isletme": user_id,
+            "bolge": context.user_data["bolge"],
+            "foto": update.message.photo[-1].file_id,
+            "alan": "",
+            "durum": "Bekliyor"
+        })
+        save_data(data)
+        await update.message.reply_text("✅ Sipariş oluşturuldu.")
+        context.user_data["mod"] = None
 
-telegram_app.add_handler(conv)
-telegram_app.add_handler(CommandHandler("siparis", siparis))
-telegram_app.add_handler(CommandHandler("paketler", paketler))
-telegram_app.add_handler(CommandHandler("admin", admin))
+# -------------------- SİPARİŞ AL --------------------
+async def al(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    siparis_id = context.args[0]
 
-@app_flask.route("/", methods=["POST"])
-async def webhook():
-    data = request.get_json()
-    update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
-    return "OK"
+    for s in data["siparisler"]:
+        if str(s["id"]) == siparis_id and s["durum"] == "Bekliyor":
+            s["alan"] = user_id
+            s["durum"] = "Alındı"
+            save_data(data)
+            await update.message.reply_text("✅ Sipariş alındı.")
 
-async def main():
-    await telegram_app.initialize()
-    await telegram_app.start()
-    await telegram_app.bot.set_webhook("https://teslimat-sistemi.onrender.com/")
-    app_flask.run(host="0.0.0.0", port=PORT)
-
+# -------------------- MAIN --------------------
 if __name__ == "__main__":
-    asyncio.run(main())
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("al", al))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mesaj))
+    app.add_handler(MessageHandler(filters.PHOTO, foto))
+
+    print("BOT AKTİF 🚀")
+    app.run_polling()
