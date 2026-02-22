@@ -1,178 +1,209 @@
-import os
-import json
+import sqlite3
+import logging
 from telegram import *
 from telegram.ext import *
+import asyncio
 
 TOKEN = "8229950774:AAGO63nQ_NfYnznbO8a4Qm_B-cCOGxESvQM"
 ADMIN_ID = 8452588697
 
-DATA_FILE = "data.json"
+logging.basicConfig(level=logging.INFO)
 
-def load():
-    if not os.path.exists(DATA_FILE):
-        return {
-            "kuryeler": {},
-            "isletmeler": {},
-            "bolgeler": [],
-            "siparisler": []
-        }
-    with open(DATA_FILE) as f:
-        return json.load(f)
+conn = sqlite3.connect("database.db", check_same_thread=False)
+cursor = conn.cursor()
 
-def save():
-    with open(DATA_FILE, "w") as f:
-        json.dump(db, f)
+# ------------------ DATABASE ------------------
 
-db = load()
+cursor.execute("""CREATE TABLE IF NOT EXISTS regions(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT UNIQUE)""")
 
-# ---------------- START ----------------
+cursor.execute("""CREATE TABLE IF NOT EXISTS couriers(
+id INTEGER PRIMARY KEY,
+active INTEGER DEFAULT 1)""")
+
+cursor.execute("""CREATE TABLE IF NOT EXISTS courier_regions(
+courier_id INTEGER,
+region_id INTEGER)""")
+
+cursor.execute("""CREATE TABLE IF NOT EXISTS businesses(
+id INTEGER PRIMARY KEY,
+name TEXT,
+region_id INTEGER,
+active INTEGER DEFAULT 1)""")
+
+cursor.execute("""CREATE TABLE IF NOT EXISTS orders(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+business_id INTEGER,
+region_id INTEGER,
+photo TEXT,
+courier_id INTEGER,
+status TEXT DEFAULT 'waiting')""")
+
+conn.commit()
+
+# ------------------ HELPERS ------------------
+
+def get_role(user_id):
+    if user_id == ADMIN_ID:
+        return "admin"
+    cursor.execute("SELECT * FROM couriers WHERE id=?", (user_id,))
+    if cursor.fetchone():
+        return "courier"
+    cursor.execute("SELECT * FROM businesses WHERE id=?", (user_id,))
+    if cursor.fetchone():
+        return "business"
+    return None
+
+def least_busy_courier(region_id):
+    cursor.execute("""
+    SELECT couriers.id, COUNT(orders.id) as total
+    FROM couriers
+    JOIN courier_regions ON couriers.id=courier_regions.courier_id
+    LEFT JOIN orders ON orders.courier_id=couriers.id AND orders.status!='delivered'
+    WHERE courier_regions.region_id=?
+    GROUP BY couriers.id
+    ORDER BY total ASC
+    LIMIT 1
+    """, (region_id,))
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+# ------------------ START ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
+    user_id = update.effective_user.id
+    role = get_role(user_id)
 
-    if uid == str(ADMIN_ID):
+    if role == "admin":
         keyboard = [
-            ["➕ Kurye Ekle", "➕ İşletme Ekle"],
-            ["🗺 Bölge Ekle", "📋 Tüm Siparişler"]
+            [KeyboardButton("👤 Kurye Yönet"), KeyboardButton("🏪 İşletme Yönet")],
+            [KeyboardButton("🗺 Bölge Yönet"), KeyboardButton("📦 Tüm Siparişler")]
         ]
-        await update.message.reply_text("👑 ADMIN PANEL",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
-        return
+        await update.message.reply_text("👑 ADMIN PANEL", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
 
-    if uid in db["kuryeler"]:
+    elif role == "courier":
         keyboard = [
-            ["📥 Bekleyenler", "📦 Aldıklarım"],
-            ["🔎 Fiş Sorgu", "🚪 Çıkış"]
+            [KeyboardButton("📥 Yeni Atananlar"), KeyboardButton("📦 Aktif Teslimatlarım")],
+            [KeyboardButton("🔎 Fiş Sorgu")]
         ]
-        await update.message.reply_text("🚚 KURYE PANEL",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
-        return
+        await update.message.reply_text("🚚 KURYE PANELİ", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
 
-    if uid in db["isletmeler"]:
+    elif role == "business":
         keyboard = [
-            ["📦 Sipariş Oluştur"],
-            ["📋 Siparişlerim"],
-            ["🔎 Fiş Sorgu"]
+            [KeyboardButton("📦 Yeni Sipariş"), KeyboardButton("📋 Aktif Siparişlerim")],
+            [KeyboardButton("🔎 Fiş Sorgu")]
         ]
-        await update.message.reply_text("🏪 İŞLETME PANEL",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
-        return
+        await update.message.reply_text("🏪 İŞLETME PANELİ", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
 
-    await update.message.reply_text("⛔ Yetkin yok.")
+    else:
+        await update.message.reply_text("Yetkiniz yok.")
 
-# ---------------- KURYE BEKLEYEN ----------------
+# ------------------ ORDER FLOW ------------------
 
-async def bekleyen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    bolgeler = db["kuryeler"][uid]["bolgeler"]
+async def new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📸 Fiş fotoğrafını gönder.")
+    context.user_data["await_photo"] = True
 
-    for s in db["siparisler"]:
-        if s["durum"] == "Bekliyor" and s["bolge"] in bolgeler:
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("await_photo"):
+        user_id = update.effective_user.id
+        photo_id = update.message.photo[-1].file_id
 
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🟢 Al", callback_data=f"al_{s['id']}")]
+        cursor.execute("SELECT region_id FROM businesses WHERE id=?", (user_id,))
+        region = cursor.fetchone()
+        if not region:
+            await update.message.reply_text("Bölge bulunamadı.")
+            return
+
+        courier = least_busy_courier(region[0])
+        if not courier:
+            await update.message.reply_text("⚠️ Bu bölgede aktif kurye yok.")
+            return
+
+        cursor.execute("INSERT INTO orders(business_id,region_id,photo,courier_id) VALUES(?,?,?,?)",
+                       (user_id, region[0], photo_id, courier))
+        conn.commit()
+
+        order_id = cursor.lastrowid
+
+        await update.message.reply_text(f"✅ Sipariş #{order_id} oluşturuldu.")
+
+        await context.bot.send_photo(
+            chat_id=courier,
+            photo=photo_id,
+            caption=f"📦 Yeni Sipariş #{order_id}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🟢 Siparişi Aldım", callback_data=f"take_{order_id}")]
             ])
+        )
 
-            await update.message.reply_photo(
-                s["foto"],
-                caption=f"📦 {s['id']}\n📍 {s['bolge']}\n🏪 {s['isletme']}",
-                reply_markup=kb
-            )
+        context.user_data["await_photo"] = False
 
-# ---------------- CALLBACK ----------------
+# ------------------ CALLBACK ------------------
 
-async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    uid = str(q.from_user.id)
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    if q.data.startswith("al_"):
-        sid = int(q.data.split("_")[1])
+    data = query.data
 
-        for s in db["siparisler"]:
-            if s["id"] == sid and s["durum"] == "Bekliyor":
-                s["durum"] = "Alındı"
-                s["alan"] = uid
-                save()
+    if data.startswith("take_"):
+        order_id = int(data.split("_")[1])
+        cursor.execute("UPDATE orders SET status='taken' WHERE id=?", (order_id,))
+        conn.commit()
 
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📦 Teslim Ettim", callback_data=f"teslim_{sid}")]
-                ])
-                await q.edit_message_reply_markup(reply_markup=kb)
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📦 Teslim Ettim", callback_data=f"deliver_{order_id}")]
+        ]))
 
-    if q.data.startswith("teslim_"):
-        sid = int(q.data.split("_")[1])
+    elif data.startswith("deliver_"):
+        order_id = int(data.split("_")[1])
+        cursor.execute("UPDATE orders SET status='delivered' WHERE id=?", (order_id,))
+        conn.commit()
 
-        for s in db["siparisler"]:
-            if s["id"] == sid and s["alan"] == uid:
-                s["durum"] = "Teslim"
-                save()
+        cursor.execute("SELECT business_id FROM orders WHERE id=?", (order_id,))
+        business_id = cursor.fetchone()[0]
 
-                await context.bot.send_message(
-                    chat_id=int(s["isletme_id"]),
-                    text=f"✅ {sid} nolu sipariş teslim edildi."
-                )
+        await context.bot.send_message(business_id, f"✅ Sipariş #{order_id} teslim edildi.")
 
-                await q.edit_message_reply_markup(reply_markup=None)
+        await query.edit_message_text(f"✅ Sipariş #{order_id} teslim edildi.")
 
-# ---------------- FOTO ----------------
+# ------------------ HANDLER ------------------
 
-async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
+async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
 
-    if uid not in db["isletmeler"]:
-        return
+    if text == "📦 Yeni Sipariş":
+        await new_order(update, context)
 
-    bolge = db["isletmeler"][uid]["bolge"]
+    elif text == "📦 Aktif Teslimatlarım":
+        user_id = update.effective_user.id
+        cursor.execute("SELECT id FROM orders WHERE courier_id=? AND status!='delivered'", (user_id,))
+        orders = cursor.fetchall()
+        if orders:
+            await update.message.reply_text("Aktif Siparişler:\n" + "\n".join([f"#{o[0]}" for o in orders]))
+        else:
+            await update.message.reply_text("Aktif sipariş yok.")
 
-    aktif = False
-    for k in db["kuryeler"].values():
-        if bolge in k["bolgeler"]:
-            aktif = True
+    elif text == "📋 Aktif Siparişlerim":
+        user_id = update.effective_user.id
+        cursor.execute("SELECT id,status FROM orders WHERE business_id=?", (user_id,))
+        orders = cursor.fetchall()
+        if orders:
+            msg = "\n".join([f"#{o[0]} - {o[1]}" for o in orders])
+            await update.message.reply_text(msg)
+        else:
+            await update.message.reply_text("Sipariş yok.")
 
-    if not aktif:
-        await update.message.reply_text("⚠️ Bu bölgede kurye yok!")
-        return
+# ------------------ MAIN ------------------
 
-    file_id = update.message.photo[-1].file_id
-    sid = len(db["siparisler"]) + 1
-
-    db["siparisler"].append({
-        "id": sid,
-        "bolge": bolge,
-        "isletme": db["isletmeler"][uid]["isim"],
-        "isletme_id": uid,
-        "foto": file_id,
-        "durum": "Bekliyor",
-        "alan": ""
-    })
-
-    save()
-
-    await update.message.reply_text("✅ Sipariş oluşturuldu.")
-
-# ---------------- TEXT ----------------
-
-async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    t = update.message.text
-
-    if t == "📥 Bekleyenler":
-        await bekleyen(update, context)
-
-    if t == "📋 Tüm Siparişler":
-        for s in db["siparisler"]:
-            await update.message.reply_text(
-                f"📦 {s['id']} | {s['bolge']} | {s['durum']}"
-            )
-
-# ---------------- MAIN ----------------
-
-app = ApplicationBuilder().token(TOKEN).build()
+app = Application.builder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT, text))
-app.add_handler(MessageHandler(filters.PHOTO, photo))
-app.add_handler(CallbackQueryHandler(callback))
+app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, messages))
+app.add_handler(CallbackQueryHandler(buttons))
 
-print("🚀 TESLİMAT SİSTEMİ PRO AKTİF")
+print("Bot çalışıyor...")
 app.run_polling()
