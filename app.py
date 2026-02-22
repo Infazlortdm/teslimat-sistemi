@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import asyncio
 from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -45,7 +46,6 @@ ROLE, NAME, REGION = range(3)
 
 telegram_app = ApplicationBuilder().token(TOKEN).build()
 
-# START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["İşletmeyim", "Kuryeyim"]]
     await update.message.reply_text(
@@ -159,10 +159,11 @@ async def webhook():
     await telegram_app.process_update(update)
     return "OK"
 
-if __name__ == "__main__":
-    telegram_app.initialize()
-    telegram_app.start()
-    telegram_app.bot.set_webhook(
-        url="https://teslimat-sistemi.onrender.com/"
-    )
+async def main():
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.bot.set_webhook("https://teslimat-sistemi.onrender.com/")
     app_flask.run(host="0.0.0.0", port=PORT)
+
+if __name__ == "__main__":
+    asyncio.run(main())
