@@ -8,15 +8,18 @@
 <style>
 body{margin:0;font-family:Arial;background:#0f172a;color:white}
 header{background:#111827;padding:15px;text-align:center;font-size:20px}
-.container{padding:15px;margin-bottom:80px}
-input,select,button{width:100%;padding:10px;margin:5px 0;border-radius:8px;border:none}
-button{background:#22c55e;color:white;font-weight:bold}
+.container{padding:20px;margin-bottom:80px}
+input,select{width:100%;padding:12px;margin:6px 0;border-radius:8px;border:none}
+button{width:100%;padding:12px;margin:6px 0;border-radius:8px;border:none;font-weight:bold}
+.primary{background:#22c55e;color:white}
+.secondary{background:#334155;color:white}
 .card{background:#1e293b;padding:15px;margin:10px 0;border-radius:10px}
 .hidden{display:none}
 .menu{position:fixed;bottom:0;width:100%;display:flex;background:#111827}
-.menu button{flex:1;background:#334155}
+.menu button{flex:1;background:#334155;color:white}
 img{max-width:100%;border-radius:10px;margin-top:10px}
 .badge{background:red;padding:3px 8px;border-radius:10px;font-size:12px}
+.error{background:#7f1d1d;padding:10px;border-radius:8px;margin-top:5px}
 </style>
 </head>
 
@@ -25,52 +28,46 @@ img{max-width:100%;border-radius:10px;margin-top:10px}
 <header>Teslimat Sistemi</header>
 
 <div class="container" id="authBox">
-<h3>Giriş / Kayıt</h3>
-<input id="email" placeholder="E-posta">
-<input id="password" type="password" placeholder="Şifre">
+
+<h3>Kayıt / Giriş</h3>
+
+<input id="name" placeholder="Ad Soyad">
+<input id="businessName" placeholder="İşletme Adı (Kurye boş bırakabilir)">
+<input id="region" placeholder="Bölge (Örnek: Balkan)">
 <select id="role">
 <option value="isletme">İşletme</option>
 <option value="kurye">Kurye</option>
-<option value="admin">Admin</option>
 </select>
-<input id="region" placeholder="Bölge (örnek: Balkan)">
-<button onclick="register()">Kayıt Ol</button>
-<button onclick="login()">Giriş Yap</button>
+
+<input id="email" placeholder="E-posta">
+<input id="password" type="password" placeholder="Şifre">
+
+<button class="primary" onclick="register()">Kayıt Ol</button>
+<button class="secondary" onclick="login()">Giriş Yap</button>
+
+<div id="errorBox"></div>
+
 </div>
 
 <div class="container hidden" id="app">
 
+<h3 id="welcome"></h3>
+
 <div id="isletmePanel" class="hidden">
-<h3>Yeni Sipariş</h3>
+<h4>Yeni Sipariş</h4>
 <input id="note" placeholder="Sipariş Notu">
 <input type="file" id="photo" accept="image/*" capture="environment">
-<button onclick="createOrder()">Sipariş Oluştur</button>
-<h3>Siparişlerim</h3>
+<button class="primary" onclick="createOrder()">Sipariş Oluştur</button>
+<h4>Siparişlerim</h4>
 <div id="isletmeOrders"></div>
 </div>
 
 <div id="kuryePanel" class="hidden">
-<h3>Paketlerim <span id="kuryeCount" class="badge"></span></h3>
+<h4>Paketlerim <span id="kuryeCount" class="badge"></span></h4>
 <div id="kuryeOrders"></div>
 </div>
 
-<div id="adminPanel" class="hidden">
-<h3>Tüm Siparişler</h3>
-<div id="adminOrders"></div>
-</div>
-
-<div id="fisPanel" class="hidden">
-<h3>Fiş Detayı</h3>
-<div id="fisContent"></div>
-<button onclick="back()">Geri</button>
-</div>
-
-<div class="menu">
-<button onclick="showPanel('isletmePanel')">🏪</button>
-<button onclick="showPanel('kuryePanel')">🚚</button>
-<button onclick="showPanel('adminPanel')">⚙</button>
-<button onclick="logout()">Çıkış</button>
-</div>
+<button onclick="logout()" class="secondary">Çıkış Yap</button>
 
 </div>
 
@@ -92,22 +89,42 @@ const db = getFirestore(app);
 
 let userData=null;
 
+function showError(msg){
+errorBox.innerHTML = `<div class="error">${msg}</div>`;
+}
+
 window.register=async()=>{
+if(!name.value || !region.value || !email.value || !password.value){
+showError("Tüm alanları doldurun");
+return;
+}
 try{
 const cred=await createUserWithEmailAndPassword(auth,email.value,password.value);
+
 await setDoc(doc(db,"users",cred.user.uid),{
-email:email.value,
+name:name.value,
+businessName:businessName.value,
+region:region.value.toLowerCase(),
 role:role.value,
-region:region.value
+email:email.value
 });
-alert("Kayıt başarılı");
-}catch(e){alert(e.message);}
+
+alert("Kayıt başarılı, giriş yapabilirsiniz.");
+}catch(e){
+if(e.code==="auth/email-already-in-use"){
+showError("Bu e-posta zaten kayıtlı. Giriş yapın.");
+}else{
+showError(e.message);
+}
+}
 }
 
 window.login=async()=>{
 try{
 await signInWithEmailAndPassword(auth,email.value,password.value);
-}catch(e){alert(e.message);}
+}catch(e){
+showError("E-posta veya şifre yanlış");
+}
 }
 
 window.logout=async()=>{await signOut(auth);}
@@ -116,20 +133,19 @@ onAuthStateChanged(auth,async(user)=>{
 if(user){
 authBox.classList.add("hidden");
 app.classList.remove("hidden");
+
 const snap=await getDoc(doc(db,"users",user.uid));
 userData=snap.data();
 
+welcome.innerText="Hoşgeldin " + userData.name;
+
 if(userData.role==="isletme"){
-showPanel("isletmePanel");
+isletmePanel.classList.remove("hidden");
 loadIsletme();
 }
 if(userData.role==="kurye"){
-showPanel("kuryePanel");
+kuryePanel.classList.remove("hidden");
 loadKurye();
-}
-if(userData.role==="admin"){
-showPanel("adminPanel");
-loadAdmin();
 }
 }else{
 app.classList.add("hidden");
@@ -139,7 +155,8 @@ authBox.classList.remove("hidden");
 
 window.createOrder=async()=>{
 const file=photo.files[0];
-if(!file){alert("Foto seç");return;}
+if(!file){alert("Fotoğraf seçin");return;}
+
 const reader=new FileReader();
 reader.onload=async()=>{
 await addDoc(collection(db,"orders"),{
@@ -148,6 +165,7 @@ region:userData.region,
 photo:reader.result,
 status:"bekliyor",
 createdBy:auth.currentUser.uid,
+business:userData.businessName,
 createdAt:Date.now()
 });
 alert("Sipariş oluşturuldu");
@@ -165,8 +183,7 @@ const data=d.data();
 isletmeOrders.innerHTML+=`
 <div class="card">
 <b>${data.note}</b><br>
-Durum: ${data.status}<br>
-<button onclick="showFis('${d.id}')">Fişi Gör</button>
+Durum: ${data.status}
 </div>`;
 });
 }
@@ -181,8 +198,9 @@ const data=d.data();
 kuryeOrders.innerHTML+=`
 <div class="card">
 <b>${data.note}</b><br>
+İşletme: ${data.business}<br>
 Durum: ${data.status}<br>
-<button onclick="showFis('${d.id}')">Fişi Gör</button>
+<img src="${data.photo}">
 <button onclick="teslim('${d.id}')">Teslim Edildi</button>
 </div>`;
 });
@@ -191,46 +209,6 @@ Durum: ${data.status}<br>
 window.teslim=async(id)=>{
 await updateDoc(doc(db,"orders",id),{status:"teslim edildi"});
 loadKurye();
-}
-
-async function loadAdmin(){
-const snap=await getDocs(collection(db,"orders"));
-adminOrders.innerHTML="";
-snap.forEach(d=>{
-const data=d.data();
-adminOrders.innerHTML+=`
-<div class="card">
-${data.note} - ${data.status}
-<button onclick="showFis('${d.id}')">Fişi Gör</button>
-</div>`;
-});
-}
-
-window.showFis=async(id)=>{
-const snap=await getDoc(doc(db,"orders",id));
-const data=snap.data();
-fisContent.innerHTML=`
-<div class="card">
-<b>${data.note}</b><br>
-Durum: ${data.status}<br>
-<img src="${data.photo}">
-<br><a href="${data.photo}" download="fis.jpg">📥 İndir</a>
-</div>`;
-showPanel("fisPanel");
-}
-
-window.showPanel=(id)=>{
-isletmePanel.classList.add("hidden");
-kuryePanel.classList.add("hidden");
-adminPanel.classList.add("hidden");
-fisPanel.classList.add("hidden");
-document.getElementById(id).classList.remove("hidden");
-}
-
-window.back=()=>{
-if(userData.role==="isletme")showPanel("isletmePanel");
-if(userData.role==="kurye")showPanel("kuryePanel");
-if(userData.role==="admin")showPanel("adminPanel");
 }
 
 </script>
