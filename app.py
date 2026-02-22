@@ -11,7 +11,7 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = "BURAYA_TOKEN"
+TOKEN = "8191531749:AAFqEELtLO-XFmvHdf99EZ5WNxwjG9d6LcU"
 ADMIN_ID = 8452588697
 PORT = int(os.environ.get("PORT", 10000))
 
