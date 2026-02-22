@@ -9,12 +9,19 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = os.getenv("8191531749:AAFqEELtLO-XFmvHdf99EZ5WNxwjG9d6LcU")
-ADMIN_ID = int(os.getenv("8452588697"))
+# ===============================
+# SABİT BİLGİLER (ENV GEREKMİYOR)
+# ===============================
+
+TOKEN = "8191531749:AAFqEELtLO-XFmvHdf99EZ5WNxwjG9d6LcU"
+ADMIN_ID = 8452588697
 
 DATA_FILE = "data.json"
 
-# -------------------- VERİ YÜKLE --------------------
+# ===============================
+# VERİ YÜKLE / KAYDET
+# ===============================
+
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {
@@ -32,7 +39,10 @@ def save_data(data):
 
 data = load_data()
 
-# -------------------- START --------------------
+# ===============================
+# START
+# ===============================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
 
@@ -72,108 +82,81 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    await update.message.reply_text("Yetkiniz yok.")
+    await update.message.reply_text("⛔ Yetkiniz yok.")
 
-# -------------------- MESAJ --------------------
+# ===============================
+# ADMIN / MESAJ
+# ===============================
+
 async def mesaj(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     text = update.message.text
 
-    # -------- ADMIN --------
     if user_id == str(ADMIN_ID):
 
         if text == "➕ Kurye Ekle":
             await update.message.reply_text("Kurye ID gönder:")
-            context.user_data["mod"] = "kurye_ekle"
+            context.user_data["mod"] = "kurye"
 
         elif text == "➕ İşletme Ekle":
             await update.message.reply_text("İşletme ID gönder:")
-            context.user_data["mod"] = "isletme_ekle"
+            context.user_data["mod"] = "isletme"
 
         elif text == "🌍 Bölge Ekle":
             await update.message.reply_text("Bölge adı gönder:")
-            context.user_data["mod"] = "bolge_ekle"
+            context.user_data["mod"] = "bolge"
 
         elif text == "📦 Tüm Siparişler":
+            if not data["siparisler"]:
+                await update.message.reply_text("Sipariş yok.")
+                return
             for s in data["siparisler"]:
                 await update.message.reply_text(
                     f"ID:{s['id']} | Bölge:{s['bolge']} | Durum:{s['durum']}"
                 )
 
-        elif context.user_data.get("mod") == "kurye_ekle":
-            data["kuryeler"][text] = {"bolge": "", "aktif": True}
+        elif context.user_data.get("mod") == "kurye":
+            data["kuryeler"][text] = {}
             save_data(data)
             await update.message.reply_text("✅ Kurye eklendi.")
             context.user_data["mod"] = None
 
-        elif context.user_data.get("mod") == "isletme_ekle":
-            data["isletmeler"][text] = {"aktif": True}
+        elif context.user_data.get("mod") == "isletme":
+            data["isletmeler"][text] = {}
             save_data(data)
             await update.message.reply_text("✅ İşletme eklendi.")
             context.user_data["mod"] = None
 
-        elif context.user_data.get("mod") == "bolge_ekle":
+        elif context.user_data.get("mod") == "bolge":
             data["bolgeler"].append(text)
             save_data(data)
             await update.message.reply_text("✅ Bölge eklendi.")
             context.user_data["mod"] = None
 
-    # -------- KURYE --------
-    elif user_id in data["kuryeler"]:
+# ===============================
+# SİPARİŞ OLUŞTURMA
+# ===============================
 
-        if text == "🟡 Bekleyenler":
-            for s in data["siparisler"]:
-                if s["durum"] == "Bekliyor":
-                    await update.message.reply_photo(
-                        photo=s["foto"],
-                        caption=f"ID:{s['id']} /al {s['id']}"
-                    )
-
-        elif text == "🔵 Aldıklarım":
-            for s in data["siparisler"]:
-                if s["alan"] == user_id:
-                    await update.message.reply_text(f"ID:{s['id']} | {s['durum']}")
-
-        elif text == "🟢 Teslim Ettiklerim":
-            for s in data["siparisler"]:
-                if s["alan"] == user_id and s["durum"] == "Teslim":
-                    await update.message.reply_text(f"ID:{s['id']}")
-
-    # -------- İŞLETME --------
-    elif user_id in data["isletmeler"]:
-
-        if text == "📦 Sipariş Oluştur":
-            keyboard = [[b] for b in data["bolgeler"]]
-            await update.message.reply_text(
-                "Bölge seç:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            )
-            context.user_data["mod"] = "bolge_sec"
-
-        elif context.user_data.get("mod") == "bolge_sec":
-            context.user_data["bolge"] = text
-            await update.message.reply_text("Fotoğraf gönder:")
-            context.user_data["mod"] = "foto_bekle"
-
-# -------------------- FOTO --------------------
 async def foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
 
-    if user_id in data["isletmeler"] and context.user_data.get("mod") == "foto_bekle":
+    if user_id in data["isletmeler"]:
         siparis_id = len(data["siparisler"]) + 1
         data["siparisler"].append({
             "id": siparis_id,
             "isletme": user_id,
-            "bolge": context.user_data["bolge"],
+            "bolge": "Genel",
             "foto": update.message.photo[-1].file_id,
             "alan": "",
             "durum": "Bekliyor"
         })
         save_data(data)
         await update.message.reply_text("✅ Sipariş oluşturuldu.")
-        context.user_data["mod"] = None
 
-# -------------------- SİPARİŞ AL --------------------
+# ===============================
+# SİPARİŞ AL
+# ===============================
+
 async def al(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     siparis_id = context.args[0]
@@ -185,7 +168,10 @@ async def al(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_data(data)
             await update.message.reply_text("✅ Sipariş alındı.")
 
-# -------------------- MAIN --------------------
+# ===============================
+# MAIN
+# ===============================
+
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
