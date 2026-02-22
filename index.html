@@ -15,30 +15,31 @@ button{width:100%;padding:12px;margin:6px 0;border-radius:8px;border:none;font-w
 .secondary{background:#334155;color:white}
 .card{background:#1e293b;padding:15px;margin:10px 0;border-radius:10px}
 .hidden{display:none}
-.menu{position:fixed;bottom:0;width:100%;display:flex;background:#111827}
-.menu button{flex:1;background:#334155;color:white}
-img{max-width:100%;border-radius:10px;margin-top:10px}
-.badge{background:red;padding:3px 8px;border-radius:10px;font-size:12px}
+.roleBox{display:flex;gap:10px}
+.roleBox button{flex:1;font-size:18px}
 .error{background:#7f1d1d;padding:10px;border-radius:8px;margin-top:5px}
+img{max-width:100%;border-radius:8px;margin-top:10px}
 </style>
 </head>
-
 <body>
 
 <header>Teslimat Sistemi</header>
 
-<div class="container" id="authBox">
+<div class="container" id="roleSelect">
+<h3>Devam etmek için seçin</h3>
+<div class="roleBox">
+<button class="primary" onclick="chooseRole('isletme')">🏪 İşletme</button>
+<button class="secondary" onclick="chooseRole('kurye')">🚚 Kurye</button>
+</div>
+</div>
 
-<h3>Kayıt / Giriş</h3>
+<div class="container hidden" id="authBox">
+
+<h3 id="formTitle"></h3>
 
 <input id="name" placeholder="Ad Soyad">
 <input id="businessName" placeholder="İşletme Adı (Kurye boş bırakabilir)">
 <input id="region" placeholder="Bölge (Örnek: Balkan)">
-<select id="role">
-<option value="isletme">İşletme</option>
-<option value="kurye">Kurye</option>
-</select>
-
 <input id="email" placeholder="E-posta">
 <input id="password" type="password" placeholder="Şifre">
 
@@ -63,11 +64,11 @@ img{max-width:100%;border-radius:10px;margin-top:10px}
 </div>
 
 <div id="kuryePanel" class="hidden">
-<h4>Paketlerim <span id="kuryeCount" class="badge"></span></h4>
+<h4>Paketler</h4>
 <div id="kuryeOrders"></div>
 </div>
 
-<button onclick="logout()" class="secondary">Çıkış Yap</button>
+<button class="secondary" onclick="logout()">Çıkış</button>
 
 </div>
 
@@ -87,43 +88,54 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+let selectedRole=null;
 let userData=null;
+
+window.chooseRole=(role)=>{
+selectedRole=role;
+roleSelect.classList.add("hidden");
+authBox.classList.remove("hidden");
+formTitle.innerText = role==="isletme" ? "İşletme Hesabı" : "Kurye Hesabı";
+}
 
 function showError(msg){
 errorBox.innerHTML = `<div class="error">${msg}</div>`;
 }
 
 window.register=async()=>{
-if(!name.value || !region.value || !email.value || !password.value){
-showError("Tüm alanları doldurun");
+const n=name.value.trim();
+const b=businessName.value.trim();
+const r=region.value.trim().toLowerCase();
+const e=email.value.trim();
+const p=password.value.trim();
+
+if(!n || !r || !e || !p){
+showError("Tüm zorunlu alanları doldurun.");
 return;
 }
+
 try{
-const cred=await createUserWithEmailAndPassword(auth,email.value,password.value);
+const cred=await createUserWithEmailAndPassword(auth,e,p);
 
 await setDoc(doc(db,"users",cred.user.uid),{
-name:name.value,
-businessName:businessName.value,
-region:region.value.toLowerCase(),
-role:role.value,
-email:email.value
+name:n,
+businessName:b,
+region:r,
+role:selectedRole,
+email:e
 });
 
-alert("Kayıt başarılı, giriş yapabilirsiniz.");
-}catch(e){
-if(e.code==="auth/email-already-in-use"){
-showError("Bu e-posta zaten kayıtlı. Giriş yapın.");
-}else{
-showError(e.message);
-}
+alert("Kayıt başarılı");
+}catch(err){
+showError("Bu e-posta zaten kayıtlı veya hata var.");
 }
 }
 
 window.login=async()=>{
 try{
-await signInWithEmailAndPassword(auth,email.value,password.value);
-}catch(e){
-showError("E-posta veya şifre yanlış");
+await signInWithEmailAndPassword(auth,email.value.trim(),password.value.trim());
+}catch(err){
+showError("E-posta veya şifre yanlış.");
 }
 }
 
@@ -137,7 +149,7 @@ app.classList.remove("hidden");
 const snap=await getDoc(doc(db,"users",user.uid));
 userData=snap.data();
 
-welcome.innerText="Hoşgeldin " + userData.name;
+welcome.innerText="Hoşgeldin "+userData.name+" ("+userData.region+")";
 
 if(userData.role==="isletme"){
 isletmePanel.classList.remove("hidden");
@@ -149,7 +161,7 @@ loadKurye();
 }
 }else{
 app.classList.add("hidden");
-authBox.classList.remove("hidden");
+roleSelect.classList.remove("hidden");
 }
 });
 
@@ -160,12 +172,12 @@ if(!file){alert("Fotoğraf seçin");return;}
 const reader=new FileReader();
 reader.onload=async()=>{
 await addDoc(collection(db,"orders"),{
-note:note.value,
+note:note.value.trim(),
 region:userData.region,
 photo:reader.result,
 status:"bekliyor",
-createdBy:auth.currentUser.uid,
 business:userData.businessName,
+createdBy:auth.currentUser.uid,
 createdAt:Date.now()
 });
 alert("Sipariş oluşturuldu");
@@ -192,7 +204,6 @@ async function loadKurye(){
 const q=query(collection(db,"orders"),where("region","==",userData.region));
 const snap=await getDocs(q);
 kuryeOrders.innerHTML="";
-kuryeCount.innerText=snap.size;
 snap.forEach(d=>{
 const data=d.data();
 kuryeOrders.innerHTML+=`
