@@ -1,4 +1,6 @@
 import sqlite3
+import os
+from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -9,8 +11,11 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = "8191531749:AAFqEELtLO-XFmvHdf99EZ5WNxwjG9d6LcU"
+TOKEN = "BURAYA_TOKEN"
 ADMIN_ID = 8452588697
+PORT = int(os.environ.get("PORT", 10000))
+
+app_flask = Flask(__name__)
 
 # DATABASE
 conn = sqlite3.connect("database.db", check_same_thread=False)
@@ -36,44 +41,36 @@ CREATE TABLE IF NOT EXISTS orders (
 """)
 conn.commit()
 
-# STATES
 ROLE, NAME, REGION = range(3)
+
+telegram_app = ApplicationBuilder().token(TOKEN).build()
 
 # START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["İşletmeyim", "Kuryeyim"]]
     await update.message.reply_text(
-        "Hoşgeldin 👋\nRolünü seç:",
+        "Hoşgeldin 👋 Rolünü seç:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
     )
     return ROLE
 
-# ROLE
 async def choose_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    user_id = update.message.from_user.id
-
     if text == "İşletmeyim":
         context.user_data["role"] = "business"
         await update.message.reply_text("İşletme adını yaz:")
         return NAME
-
     elif text == "Kuryeyim":
         context.user_data["role"] = "courier"
         await update.message.reply_text("Adını yaz:")
         return NAME
+    return ROLE
 
-    else:
-        await update.message.reply_text("Buton kullan.")
-        return ROLE
-
-# NAME
 async def save_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["name"] = update.message.text
     await update.message.reply_text("Bölgeni yaz:")
     return REGION
 
-# REGION
 async def save_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     region = update.message.text
@@ -81,22 +78,16 @@ async def save_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = context.user_data["name"]
 
     cursor.execute(
-        "INSERT OR REPLACE INTO users (telegram_id, role, name, region) VALUES (?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?)",
         (user_id, role, name, region),
     )
     conn.commit()
 
-    if role == "business":
-        await update.message.reply_text("Kayıt tamam ✅\nSipariş için /siparis yaz")
-    else:
-        await update.message.reply_text("Kayıt tamam ✅\nPaketler için /paketler yaz")
-
+    await update.message.reply_text("Kayıt tamam ✅")
     return ConversationHandler.END
 
-# SİPARİŞ
 async def siparis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-
     cursor.execute("SELECT role, name, region FROM users WHERE telegram_id=?", (user_id,))
     user = cursor.fetchone()
 
@@ -112,10 +103,8 @@ async def siparis(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("Sipariş oluşturuldu ✅")
 
-# PAKETLER
 async def paketler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-
     cursor.execute("SELECT role, region FROM users WHERE telegram_id=?", (user_id,))
     user = cursor.fetchone()
 
@@ -133,35 +122,20 @@ async def paketler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Bu bölgede paket yok.")
         return
 
-    text = "📦 Bekleyen Paketler:\n"
+    text = "📦 Paketler:\n"
     for o in orders:
         text += f"No: {o[0]} - {o[1]}\n"
 
     await update.message.reply_text(text)
 
-# ADMIN
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-
-    if user_id != ADMIN_ID:
+    if update.message.from_user.id != ADMIN_ID:
         await update.message.reply_text("Yetkin yok.")
         return
 
-    cursor.execute("SELECT COUNT(*) FROM users WHERE role='business'")
-    b = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM users WHERE role='courier'")
-    c = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM orders")
-    o = cursor.fetchone()[0]
-
-    await update.message.reply_text(
-        f"📊 ADMIN PANEL\n\nİşletme: {b}\nKurye: {c}\nToplam Sipariş: {o}"
-    )
-
-# APP
-app = ApplicationBuilder().token(TOKEN).build()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total = cursor.fetchone()[0]
+    await update.message.reply_text(f"Toplam kullanıcı: {total}")
 
 conv = ConversationHandler(
     entry_points=[CommandHandler("start", start)],
@@ -173,10 +147,22 @@ conv = ConversationHandler(
     fallbacks=[],
 )
 
-app.add_handler(conv)
-app.add_handler(CommandHandler("siparis", siparis))
-app.add_handler(CommandHandler("paketler", paketler))
-app.add_handler(CommandHandler("admin", admin))
+telegram_app.add_handler(conv)
+telegram_app.add_handler(CommandHandler("siparis", siparis))
+telegram_app.add_handler(CommandHandler("paketler", paketler))
+telegram_app.add_handler(CommandHandler("admin", admin))
 
-print("Bot çalışıyor...")
-app.run_polling()
+@app_flask.route("/", methods=["POST"])
+async def webhook():
+    data = request.get_json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return "OK"
+
+if __name__ == "__main__":
+    telegram_app.initialize()
+    telegram_app.start()
+    telegram_app.bot.set_webhook(
+        url="https://teslimat-sistemi.onrender.com/"
+    )
+    app_flask.run(host="0.0.0.0", port=PORT)
