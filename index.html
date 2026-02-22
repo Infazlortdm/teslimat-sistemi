@@ -6,211 +6,234 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
-body { font-family: Arial; margin:0; background:#0f172a; color:white; }
-input, select, button { padding:10px; margin:5px 0; width:100%; border-radius:8px; border:none; }
-button { background:#22c55e; color:white; font-weight:bold; }
-.hidden { display:none; }
-.card { background:#1e293b; padding:15px; margin:10px 0; border-radius:10px; }
-.menu { display:flex; justify-content:space-around; background:#111827; padding:10px; position:fixed; bottom:0; width:100%; }
-.menu button { width:auto; background:#334155; }
-.badge { background:red; padding:3px 8px; border-radius:10px; font-size:12px; }
-img { max-width:100%; border-radius:10px; margin-top:10px; }
+body{margin:0;font-family:Arial;background:#0f172a;color:white}
+header{padding:15px;background:#111827;font-size:20px;text-align:center}
+input,select,button{width:100%;padding:10px;margin:5px 0;border-radius:8px;border:none}
+button{background:#22c55e;color:white;font-weight:bold}
+.card{background:#1e293b;padding:15px;margin:10px;border-radius:10px}
+.hidden{display:none}
+.menu{position:fixed;bottom:0;width:100%;display:flex;background:#111827}
+.menu button{flex:1;background:#334155}
+img{max-width:100%;border-radius:10px;margin-top:10px}
+.badge{background:red;padding:3px 8px;border-radius:10px;font-size:12px}
 </style>
 </head>
 
 <body>
 
-<h2 id="title">Giriş Yap</h2>
+<header>Teslimat Sistemi</header>
 
 <div id="authBox">
+<h3>Giriş / Kayıt</h3>
 <input id="email" placeholder="E-posta">
 <input id="password" type="password" placeholder="Şifre">
-
 <select id="role">
 <option value="isletme">İşletme</option>
 <option value="kurye">Kurye</option>
 <option value="admin">Admin</option>
 </select>
-
-<input id="region" placeholder="Bölge (Balkan vs)">
+<input id="region" placeholder="Bölge (örnek: Balkan)">
 <button onclick="register()">Kayıt Ol</button>
 <button onclick="login()">Giriş Yap</button>
 </div>
 
 <div id="app" class="hidden">
 
-<div id="isletmePanel" class="hidden">
+<div id="isletmePage" class="hidden">
 <h3>Yeni Sipariş</h3>
 <input id="note" placeholder="Sipariş Notu">
-<input type="file" accept="image/*" capture="camera" id="photo">
+<input type="file" id="photo" accept="image/*" capture="environment">
 <button onclick="createOrder()">Sipariş Oluştur</button>
 <div id="isletmeOrders"></div>
 </div>
 
-<div id="kuryePanel" class="hidden">
-<h3>Atanan Paketler <span id="kuryeCount" class="badge"></span></h3>
+<div id="kuryePage" class="hidden">
+<h3>Paketlerim <span id="kuryeCount" class="badge"></span></h3>
 <div id="kuryeOrders"></div>
 </div>
 
-<div id="adminPanel" class="hidden">
+<div id="adminPage" class="hidden">
 <h3>Tüm Siparişler</h3>
 <div id="adminOrders"></div>
 </div>
 
+<div id="fisPage" class="hidden">
+<h3>Fiş Detayı</h3>
+<div id="fisContent"></div>
+<button onclick="back()">Geri</button>
+</div>
+
 <div class="menu">
-<button onclick="showPage('isletmePanel')">🏪</button>
-<button onclick="showPage('kuryePanel')">🚚</button>
-<button onclick="showPage('adminPanel')">⚙</button>
+<button onclick="showPage('isletmePage')">🏪</button>
+<button onclick="showPage('kuryePage')">🚚</button>
+<button onclick="showPage('adminPage')">⚙</button>
 <button onclick="logout()">Çıkış</button>
 </div>
 
 </div>
 
 <script type="module">
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "BURAYA_API_KEY",
-  authDomain: "BURAYA_AUTH_DOMAIN",
-  projectId: "BURAYA_PROJECT_ID",
+  apiKey: "AIzaSyBjNRgjDF2r6xrtZw9OwOZS6JHsSQt1bvg",
+  authDomain: "teslimat-sistemi.firebaseapp.com",
+  projectId: "teslimat-sistemi"
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-let currentUserData = null;
+let userData=null;
 
-window.register = async function() {
-  const email = email.value;
-  const pass = password.value;
-  const roleVal = role.value;
-  const regionVal = region.value;
+window.register=async()=>{
+const mail=email.value;
+const pass=password.value;
+const roleVal=role.value;
+const regionVal=region.value;
 
-  const userCred = await createUserWithEmailAndPassword(auth,email,pass);
+const cred=await createUserWithEmailAndPassword(auth,mail,pass);
 
-  await setDoc(doc(db,"users",userCred.user.uid),{
-    email,
-    role: roleVal,
-    region: regionVal
-  });
-
-  alert("Kayıt başarılı");
-}
-
-window.login = async function() {
-  await signInWithEmailAndPassword(auth,email.value,password.value);
-}
-
-window.logout = async function() {
-  await signOut(auth);
-}
-
-onAuthStateChanged(auth, async (user)=>{
-  if(user){
-    const snap = await getDoc(doc(db,"users",user.uid));
-    currentUserData = snap.data();
-
-    authBox.classList.add("hidden");
-    app.classList.remove("hidden");
-
-    if(currentUserData.role==="isletme"){
-      isletmePanel.classList.remove("hidden");
-      loadIsletmeOrders();
-    }
-    if(currentUserData.role==="kurye"){
-      kuryePanel.classList.remove("hidden");
-      loadKuryeOrders();
-    }
-    if(currentUserData.role==="admin"){
-      adminPanel.classList.remove("hidden");
-      loadAdminOrders();
-    }
-
-  }else{
-    app.classList.add("hidden");
-    authBox.classList.remove("hidden");
-  }
+await setDoc(doc(db,"users",cred.user.uid),{
+email:mail,
+role:roleVal,
+region:regionVal
 });
 
-window.createOrder = async function(){
-  const file = photo.files[0];
-  const reader = new FileReader();
-  reader.onload = async function(){
-    const base64 = reader.result;
-
-    await addDoc(collection(db,"orders"),{
-      note: note.value,
-      region: currentUserData.region,
-      photo: base64,
-      status:"bekliyor",
-      createdBy: auth.currentUser.uid
-    });
-
-    alert("Sipariş oluşturuldu");
-  }
-  reader.readAsDataURL(file);
+alert("Kayıt başarılı");
 }
 
-async function loadIsletmeOrders(){
-  const q = query(collection(db,"orders"), where("createdBy","==",auth.currentUser.uid));
-  const snap = await getDocs(q);
-  isletmeOrders.innerHTML="";
-  snap.forEach(docu=>{
-    const d = docu.data();
-    isletmeOrders.innerHTML+=`
-      <div class="card">
-      ${d.note} - ${d.status}
-      <img src="${d.photo}">
-      <a href="${d.photo}" download="fis.jpg">İndir</a>
-      </div>`;
-  });
+window.login=async()=>{
+await signInWithEmailAndPassword(auth,email.value,password.value);
 }
 
-async function loadKuryeOrders(){
-  const q = query(collection(db,"orders"), where("region","==",currentUserData.region));
-  const snap = await getDocs(q);
-  kuryeOrders.innerHTML="";
-  kuryeCount.innerText=snap.size;
-  snap.forEach(docu=>{
-    const d = docu.data();
-    kuryeOrders.innerHTML+=`
-      <div class="card">
-      ${d.note} - ${d.status}
-      <img src="${d.photo}">
-      <button onclick="teslim('${docu.id}')">Teslim Edildi</button>
-      </div>`;
-  });
+window.logout=async()=>{
+await signOut(auth);
 }
 
-window.teslim = async function(id){
-  await updateDoc(doc(db,"orders",id),{
-    status:"teslim edildi"
-  });
-  alert("Teslim edildi");
-  loadKuryeOrders();
+onAuthStateChanged(auth,async(user)=>{
+if(user){
+authBox.classList.add("hidden");
+app.classList.remove("hidden");
+const snap=await getDoc(doc(db,"users",user.uid));
+userData=snap.data();
+
+if(userData.role==="isletme"){
+showPage("isletmePage");
+loadIsletme();
+}
+if(userData.role==="kurye"){
+showPage("kuryePage");
+loadKurye();
+}
+if(userData.role==="admin"){
+showPage("adminPage");
+loadAdmin();
+}
+}else{
+app.classList.add("hidden");
+authBox.classList.remove("hidden");
+}
+});
+
+window.createOrder=async()=>{
+const file=photo.files[0];
+if(!file){alert("Foto seç");return;}
+const reader=new FileReader();
+reader.onload=async()=>{
+await addDoc(collection(db,"orders"),{
+note:note.value,
+region:userData.region,
+photo:reader.result,
+status:"bekliyor",
+createdBy:auth.currentUser.uid,
+createdAt:Date.now()
+});
+alert("Sipariş kaydedildi");
+loadIsletme();
+}
+reader.readAsDataURL(file);
 }
 
-async function loadAdminOrders(){
-  const snap = await getDocs(collection(db,"orders"));
-  adminOrders.innerHTML="";
-  snap.forEach(docu=>{
-    const d = docu.data();
-    adminOrders.innerHTML+=`
-      <div class="card">
-      ${d.note} - ${d.status}
-      <img src="${d.photo}">
-      </div>`;
-  });
+async function loadIsletme(){
+const q=query(collection(db,"orders"),where("createdBy","==",auth.currentUser.uid));
+const snap=await getDocs(q);
+isletmeOrders.innerHTML="";
+snap.forEach(d=>{
+const data=d.data();
+isletmeOrders.innerHTML+=`
+<div class="card">
+<b>${data.note}</b><br>
+Durum: ${data.status}<br>
+<button onclick="showFis('${d.id}')">Fişi Gör</button>
+</div>`;
+});
 }
 
-window.showPage = function(id){
-  isletmePanel.classList.add("hidden");
-  kuryePanel.classList.add("hidden");
-  adminPanel.classList.add("hidden");
-  document.getElementById(id).classList.remove("hidden");
+async function loadKurye(){
+const q=query(collection(db,"orders"),where("region","==",userData.region));
+const snap=await getDocs(q);
+kuryeOrders.innerHTML="";
+kuryeCount.innerText=snap.size;
+snap.forEach(d=>{
+const data=d.data();
+kuryeOrders.innerHTML+=`
+<div class="card">
+<b>${data.note}</b><br>
+Durum: ${data.status}<br>
+<button onclick="showFis('${d.id}')">Fişi Gör</button>
+<button onclick="teslim('${d.id}')">Teslim Edildi</button>
+</div>`;
+});
+}
+
+window.teslim=async(id)=>{
+await updateDoc(doc(db,"orders",id),{status:"teslim edildi"});
+loadKurye();
+}
+
+async function loadAdmin(){
+const snap=await getDocs(collection(db,"orders"));
+adminOrders.innerHTML="";
+snap.forEach(d=>{
+const data=d.data();
+adminOrders.innerHTML+=`
+<div class="card">
+${data.note} - ${data.status}
+<button onclick="showFis('${d.id}')">Fişi Gör</button>
+</div>`;
+});
+}
+
+window.showFis=async(id)=>{
+const snap=await getDoc(doc(db,"orders",id));
+const data=snap.data();
+fisContent.innerHTML=`
+<div class="card">
+<b>${data.note}</b><br>
+Durum: ${data.status}<br>
+<img src="${data.photo}">
+<br><a href="${data.photo}" download="fis.jpg">📥 İndir</a>
+</div>`;
+showPage("fisPage");
+}
+
+window.showPage=(id)=>{
+isletmePage.classList.add("hidden");
+kuryePage.classList.add("hidden");
+adminPage.classList.add("hidden");
+fisPage.classList.add("hidden");
+document.getElementById(id).classList.remove("hidden");
+}
+
+window.back=()=>{
+if(userData.role==="isletme")showPage("isletmePage");
+if(userData.role==="kurye")showPage("kuryePage");
+if(userData.role==="admin")showPage("adminPage");
 }
 
 </script>
