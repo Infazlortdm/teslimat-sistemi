@@ -1,21 +1,24 @@
 import sqlite3
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    ConversationHandler,
+    filters,
+)
 
-# 🔐 BOT TOKEN
 TOKEN = "8191531749:AAFqEELtLO-XFmvHdf99EZ5WNxwjG9d6LcU"
+ADMIN_ID = 8452588697
 
-# 👑 ADMIN ID
-ADMIN_ID = "8452588697"
-
-# 🗄 Database
+# DATABASE
 conn = sqlite3.connect("database.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    telegram_id TEXT,
+    telegram_id INTEGER PRIMARY KEY,
     role TEXT,
     name TEXT,
     region TEXT
@@ -28,143 +31,152 @@ CREATE TABLE IF NOT EXISTS orders (
     business_name TEXT,
     region TEXT,
     status TEXT,
-    courier TEXT
+    courier INTEGER
 )
 """)
 conn.commit()
 
+# STATES
+ROLE, NAME, REGION = range(3)
 
-# 🚀 START
+# START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["İşletmeyim", "Kuryeyim"]]
     await update.message.reply_text(
         "Hoşgeldin 👋\nRolünü seç:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
     )
+    return ROLE
 
-
-# 👤 ROL SEÇİMİ
-async def role_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ROLE
+async def choose_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    user_id = str(update.message.from_user.id)
+    user_id = update.message.from_user.id
 
     if text == "İşletmeyim":
-        cursor.execute("INSERT INTO users (telegram_id, role) VALUES (?, ?)", (user_id, "business"))
-        conn.commit()
+        context.user_data["role"] = "business"
         await update.message.reply_text("İşletme adını yaz:")
-        context.user_data["step"] = "business_name"
+        return NAME
 
     elif text == "Kuryeyim":
-        cursor.execute("INSERT INTO users (telegram_id, role) VALUES (?, ?)", (user_id, "courier"))
-        conn.commit()
+        context.user_data["role"] = "courier"
         await update.message.reply_text("Adını yaz:")
-        context.user_data["step"] = "courier_name"
+        return NAME
 
+    else:
+        await update.message.reply_text("Buton kullan.")
+        return ROLE
 
-# 📝 BİLGİ TAMAMLAMA
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    text = update.message.text
-    step = context.user_data.get("step")
+# NAME
+async def save_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["name"] = update.message.text
+    await update.message.reply_text("Bölgeni yaz:")
+    return REGION
 
-    if step == "business_name":
-        cursor.execute("UPDATE users SET name=? WHERE telegram_id=?", (text, user_id))
-        conn.commit()
-        await update.message.reply_text("Bölgeni yaz:")
-        context.user_data["step"] = "business_region"
+# REGION
+async def save_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    region = update.message.text
+    role = context.user_data["role"]
+    name = context.user_data["name"]
 
-    elif step == "business_region":
-        cursor.execute("UPDATE users SET region=? WHERE telegram_id=?", (text, user_id))
-        conn.commit()
-        await update.message.reply_text("Sipariş oluşturmak için /siparis yaz")
-        context.user_data.clear()
+    cursor.execute(
+        "INSERT OR REPLACE INTO users (telegram_id, role, name, region) VALUES (?, ?, ?, ?)",
+        (user_id, role, name, region),
+    )
+    conn.commit()
 
-    elif step == "courier_name":
-        cursor.execute("UPDATE users SET name=? WHERE telegram_id=?", (text, user_id))
-        conn.commit()
-        await update.message.reply_text("Bölgeni yaz:")
-        context.user_data["step"] = "courier_region"
+    if role == "business":
+        await update.message.reply_text("Kayıt tamam ✅\nSipariş için /siparis yaz")
+    else:
+        await update.message.reply_text("Kayıt tamam ✅\nPaketler için /paketler yaz")
 
-    elif step == "courier_region":
-        cursor.execute("UPDATE users SET region=? WHERE telegram_id=?", (text, user_id))
-        conn.commit()
-        await update.message.reply_text("Sipariş görmek için /paketler yaz")
-        context.user_data.clear()
+    return ConversationHandler.END
 
-
-# 📦 SİPARİŞ OLUŞTUR
+# SİPARİŞ
 async def siparis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    cursor.execute("SELECT name, region FROM users WHERE telegram_id=?", (user_id,))
+    user_id = update.message.from_user.id
+
+    cursor.execute("SELECT role, name, region FROM users WHERE telegram_id=?", (user_id,))
     user = cursor.fetchone()
 
-    if user:
-        cursor.execute(
-            "INSERT INTO orders (business_name, region, status) VALUES (?, ?, ?)",
-            (user[0], user[1], "bekliyor")
-        )
-        conn.commit()
-        await update.message.reply_text("Sipariş oluşturuldu ✅")
+    if not user or user[0] != "business":
+        await update.message.reply_text("Sadece işletme sipariş oluşturabilir.")
+        return
 
+    cursor.execute(
+        "INSERT INTO orders (business_name, region, status) VALUES (?, ?, ?)",
+        (user[1], user[2], "bekliyor"),
+    )
+    conn.commit()
 
-# 📦 PAKET LİSTE
+    await update.message.reply_text("Sipariş oluşturuldu ✅")
+
+# PAKETLER
 async def paketler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    cursor.execute("SELECT region FROM users WHERE telegram_id=?", (user_id,))
-    region = cursor.fetchone()
+    user_id = update.message.from_user.id
 
-    if region:
-        cursor.execute(
-            "SELECT id, business_name FROM orders WHERE region=? AND status='bekliyor'",
-            (region[0],)
-        )
-        orders = cursor.fetchall()
+    cursor.execute("SELECT role, region FROM users WHERE telegram_id=?", (user_id,))
+    user = cursor.fetchone()
 
-        if orders:
-            msg = "📦 Bekleyen Siparişler:\n"
-            for o in orders:
-                msg += f"Sipariş No: {o[0]} - {o[1]}\n"
-            await update.message.reply_text(msg)
-        else:
-            await update.message.reply_text("Bu bölgede bekleyen sipariş yok.")
+    if not user or user[0] != "courier":
+        await update.message.reply_text("Sadece kurye görebilir.")
+        return
 
+    cursor.execute(
+        "SELECT id, business_name FROM orders WHERE region=? AND status='bekliyor'",
+        (user[1],),
+    )
+    orders = cursor.fetchall()
 
-# 👑 ADMIN PANEL
+    if not orders:
+        await update.message.reply_text("Bu bölgede paket yok.")
+        return
+
+    text = "📦 Bekleyen Paketler:\n"
+    for o in orders:
+        text += f"No: {o[0]} - {o[1]}\n"
+
+    await update.message.reply_text(text)
+
+# ADMIN
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
+    user_id = update.message.from_user.id
 
     if user_id != ADMIN_ID:
-        await update.message.reply_text("Yetkin yok ❌")
+        await update.message.reply_text("Yetkin yok.")
         return
 
     cursor.execute("SELECT COUNT(*) FROM users WHERE role='business'")
-    business_count = cursor.fetchone()[0]
+    b = cursor.fetchone()[0]
 
     cursor.execute("SELECT COUNT(*) FROM users WHERE role='courier'")
-    courier_count = cursor.fetchone()[0]
+    c = cursor.fetchone()[0]
 
     cursor.execute("SELECT COUNT(*) FROM orders")
-    order_count = cursor.fetchone()[0]
+    o = cursor.fetchone()[0]
 
-    msg = f"""
-📊 ADMIN PANEL
+    await update.message.reply_text(
+        f"📊 ADMIN PANEL\n\nİşletme: {b}\nKurye: {c}\nToplam Sipariş: {o}"
+    )
 
-🏪 İşletme Sayısı: {business_count}
-🛵 Kurye Sayısı: {courier_count}
-📦 Toplam Sipariş: {order_count}
-"""
-    await update.message.reply_text(msg)
-
-
-# 🚀 BOT BAŞLAT
+# APP
 app = ApplicationBuilder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
+conv = ConversationHandler(
+    entry_points=[CommandHandler("start", start)],
+    states={
+        ROLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_role)],
+        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_name)],
+        REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_region)],
+    },
+    fallbacks=[],
+)
+
+app.add_handler(conv)
 app.add_handler(CommandHandler("siparis", siparis))
 app.add_handler(CommandHandler("paketler", paketler))
 app.add_handler(CommandHandler("admin", admin))
 
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, role_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
+print("Bot çalışıyor...")
 app.run_polling()
