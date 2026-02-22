@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🚚 Teslimat Sistemi</title>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+
+<style>
+body{margin:0;font-family:system-ui;background:#0f172a;color:white}
+header{padding:15px;text-align:center;background:#111827;font-weight:bold}
+.container{padding:15px;padding-bottom:80px}
+.kart{background:#1e293b;padding:15px;border-radius:15px;margin-bottom:15px}
+input,select{width:100%;padding:12px;margin-top:8px;border-radius:10px;border:none;background:#0f172a;color:white}
+button{width:100%;padding:12px;margin-top:10px;border:none;border-radius:12px;font-weight:bold}
+.yesil{background:#22c55e}
+.mavi{background:#3b82f6}
+.kirmizi{background:#ef4444}
+.altmenu{position:fixed;bottom:0;width:100%;background:#111827;display:flex;justify-content:space-around;padding:10px 0}
+.altmenu button{background:none;color:white;border:none}
+.durum{padding:5px 10px;border-radius:20px;font-size:12px;display:inline-block}
+.bekliyor{background:#f59e0b}
+.alindi{background:#3b82f6}
+.teslim{background:#22c55e}
+img{width:100%;border-radius:10px;margin-top:8px}
+</style>
+</head>
+
+<body>
+
+<header id="baslik">🚚 Teslimat Sistemi</header>
+
+<div class="container">
+
+<div id="auth">
+
+<h3>🔐 Giriş</h3>
+<input id="email" placeholder="Email">
+<input id="password" type="password" placeholder="Şifre">
+<button class="yesil" onclick="giris()">Giriş</button>
+
+<hr>
+
+<h3>📝 Kayıt</h3>
+<input id="ad" placeholder="Ad">
+<input id="soyad" placeholder="Soyad">
+
+<select id="rol">
+<option value="isletmeci">İşletmeci</option>
+<option value="kurye">Kurye</option>
+<option value="admin">Admin</option>
+</select>
+
+<input id="isletme" placeholder="İşletme Adı (İşletmeci)">
+<input id="bolgeler" placeholder="Bölgeler (Kurye için: Balkan,Merkez)">
+
+<button class="mavi" onclick="kayit()">Kayıt Ol</button>
+
+</div>
+
+<div id="app" style="display:none"></div>
+
+</div>
+
+<div id="menu" class="altmenu" style="display:none">
+<button onclick="sekme('panel')">🏠 Panel</button>
+<button onclick="sekme('siparis')">📦 Sipariş</button>
+<button onclick="sekme('gecmis')">📜 Geçmiş</button>
+<button onclick="cikis()">🚪 Çıkış</button>
+</div>
+
+<script>
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBjNRgjDF2r6xrtZw9OwOZS6JHsSQt1bvg",
+  authDomain: "teslimat-sistemi.firebaseapp.com",
+  projectId: "teslimat-sistemi",
+  storageBucket: "teslimat-sistemi.firebasestorage.app",
+  messagingSenderId: "305287902011",
+  appId: "1:305287902011:web:3faa29201b1b214dd6bd1e"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+const storage = firebase.storage();
+
+let aktifUser, profil, aktifSekme="panel";
+
+auth.onAuthStateChanged(user=>{
+if(user){ aktifUser=user; profilYukle(); }
+});
+
+async function kayit(){
+const userCred = await auth.createUserWithEmailAndPassword(email.value,password.value);
+await db.collection("kullanicilar").doc(userCred.user.uid).set({
+ad:ad.value,
+soyad:soyad.value,
+rol:rol.value,
+isletme:isletme.value || "",
+bolgeler: bolgeler.value? bolgeler.value.split(",") : [],
+online:false
+});
+alert("Kayıt başarılı");
+}
+
+async function giris(){
+await auth.signInWithEmailAndPassword(email.value,password.value);
+}
+
+async function cikis(){
+await auth.signOut();
+location.reload();
+}
+
+async function profilYukle(){
+const doc = await db.collection("kullanicilar").doc(aktifUser.uid).get();
+profil=doc.data();
+authDiv.style.display="none";
+app.style.display="block";
+menu.style.display="flex";
+baslik.innerText="👤 "+profil.ad+" ("+profil.rol+")";
+sekme("panel");
+}
+
+function sekme(s){ aktifSekme=s; render(); }
+
+async function render(){
+if(profil.rol==="admin"){
+const snap=await db.collection("kullanicilar").get();
+app.innerHTML=snap.docs.map(d=>"<div class='kart'>"+d.data().ad+" ("+d.data().rol+")</div>").join("");
+return;
+}
+
+if(profil.rol==="isletmeci"){
+if(aktifSekme==="panel"){
+app.innerHTML="<div class='kart'>Sipariş oluşturmak için Sipariş sekmesine geç.</div>";
+}
+if(aktifSekme==="siparis"){
+app.innerHTML=`
+<div class="kart">
+<input id="bolgeInput" placeholder="Bölge">
+<input type="file" id="foto">
+<button class="yesil" onclick="siparisOlustur()">Sipariş Oluştur</button>
+</div>
+<div id="liste"></div>`;
+listele();
+}
+}
+
+if(profil.rol==="kurye"){
+const snap=await db.collection("siparisler")
+.where("kurye","==",aktifUser.uid)
+.get();
+
+app.innerHTML=snap.docs.map(d=>{
+let s=d.data();
+return `
+<div class="kart">
+<b>Paket ${s.paketNo}</b>
+<img src="${s.foto}">
+<div class="durum ${s.durum}">${s.durum}</div>
+<button class="yesil" onclick="teslimEt('${d.id}')">Teslim Ettim</button>
+</div>`;
+}).join("");
+}
+}
+
+async function siparisOlustur(){
+if(!foto.files[0]){alert("Foto zorunlu");return;}
+let file=foto.files[0];
+let ref=storage.ref("fisler/"+Date.now()+"_"+file.name);
+await ref.put(file);
+let url=await ref.getDownloadURL();
+
+let kurye=await adaletliKuryeSec(bolgeInput.value);
+
+await db.collection("siparisler").add({
+paketNo:Date.now(),
+isletmeci:aktifUser.uid,
+kurye:kurye,
+bolge:bolgeInput.value,
+foto:url,
+durum:"bekliyor",
+tarih:new Date()
+});
+
+alert("Sipariş oluşturuldu");
+}
+
+async function adaletliKuryeSec(bolge){
+const kuryeler=await db.collection("kullanicilar")
+.where("rol","==","kurye")
+.where("bolgeler","array-contains",bolge)
+.get();
+
+let sec=kuryeler.docs[Math.floor(Math.random()*kuryeler.docs.length)];
+return sec.id;
+}
+
+async function teslimEt(id){
+await db.collection("siparisler").doc(id).update({durum:"teslim"});
+render();
+}
+
+</script>
+
+</body>
+</html>
